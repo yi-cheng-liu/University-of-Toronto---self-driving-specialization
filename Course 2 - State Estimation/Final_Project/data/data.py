@@ -38,7 +38,6 @@ class Data():
         self._r_init = r
         self._w_init = w
         self._alpha_init = alpha
-        
 
         # 
         self._t = t
