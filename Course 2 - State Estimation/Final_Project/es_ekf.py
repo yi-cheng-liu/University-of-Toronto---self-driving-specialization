@@ -42,8 +42,8 @@ with open('data/pt1_data.pkl', 'rb') as file:
 #     t: Timestamps in ms.
 ################################################################################################
 gt = data['gt']
-imu_f = data['imu_f']
-imu_w = data['imu_w']
+imu_f = data['imu_f'] # imu specific force
+imu_w = data['imu_w'] # imu rotational rates
 gnss = data['gnss']
 lidar = data['lidar']
 
@@ -96,8 +96,8 @@ lidar.data = (C_li @ lidar.data.T).T + t_i_li
 # most important aspects of a filter is setting the estimated sensor variances correctly.
 # We set the values here.
 ################################################################################################
-var_imu_f = 0.10
-var_imu_w = 0.25
+var_imu_f = 0.10 # imu specific force
+var_imu_w = 0.25 # imu rotational rates
 var_gnss  = 0.01
 var_lidar = 1.00
 
@@ -162,18 +162,59 @@ def measurement_update(sensor_var, p_cov_check, y_k, p_check, v_check, q_check):
 # Now that everything is set up, we can start taking in the sensor data and creating estimates
 # for our state in a loop.
 ################################################################################################
+#### 5. Main Filter Loop #######################################################################
+
+################################################################################################
+# Now that everything is set up, we can start taking in the sensor data and creating estimates
+# for our state in a loop.
+################################################################################################
+f = open("demofile2.txt", "a")
+
 for k in range(1, imu_f.data.shape[0]):  # start at 1 b/c we have initial prediction from gt
     delta_t = imu_f.t[k] - imu_f.t[k - 1]
 
     # 1. Update state with IMU inputs
+    C_ns = Quaternion(*q_est[k-1]).to_mat() # C_ns (rotation matrix)
+    C_ns_F_former = C_ns.dot(imu_f.data[k-1]) # C_ns * F_former
 
     # 1.1 Linearize the motion model and compute Jacobians
-
+    # Position 
+    p_est[k] = p_est[k-1] + delta_t*v_est[k-1] + (delta_t**2 / 2)*( + g)
+    # Velocity
+    v_est[k] = v_est[k-1] + delta_t*(C_ns_F_former + g)
+    # Orientation
+    q_est[k] = Quaternion(axis_angle=imu_w.data[k-1] * delta_t).quat_mult_right(q_est[k-1])
+    
     # 2. Propagate uncertainty
-
+    F = np.identity(9)
+    Q = np.identity(6)
+    F[0:3, 3:6] = np.identity(3) * delta_t
+    F[3:6, 6:9] = -(C_ns.dot(skew_symmetric(imu_f.data[k-1].reshape((3,1)))))
+    Q[:, :3] *= delta_t**2 * var_imu_f
+    Q[:, -3:] *= delta_t**2 * var_imu_w
+    p_cov[k] = F.dot(p_cov[k-1]).dot(F.T) + l_jac.dot(Q).dot(l_jac.T)
+  
     # 3. Check availability of GNSS and LIDAR measurements
+    # for i in range(len(gnss.t)):
+    #     if gnss.t[i] == imu_f.t[k-1]:
+    #         p_est[k], v_est[k], q_est[k], p_cov[k] = measurement_update(var_gnss, p_cov[k], gnss.data[i].T, p_est[k], v_est[k], q_est[k])
+    # for i in range(len(lidar.t)):
+    #   if lidar.t[i] == imu_f.t[k-1]:
+    #         p_est[k], v_est[k], q_est[k], p_cov[k] = measurement_update(var_lidar, p_cov[k], lidar.data[i].T, p_est[k], v_est[k], q_est[k])
+    # for i in range(len(gnss.t)):
+    #     if gnss.t[i] == imu_f.t[k-1]:
+    #         p_est[k], v_est[k], q_est[k], p_cov[k] = measurement_update(var_gnss, p_cov[k], gnss.data[i].T, p_est[k], v_est[k], q_est[k])
+    if (lidar_i < lidar.t.shape[0]) and (lidar.t[lidar_i] == imu_f.t[k-1]):
+        p_est[k], v_est[k], q_est[k], p_cov[k] = measurement_update(var_lidar, p_cov[k], lidar.data[lidar_i].T, p_est[k], v_est[k], q_est[k])
+        lidar_i += 1
+    if (gnss_i < gnss.t.shape[0]) and (gnss.t[gnss_i] == imu_f.t[k-1]):
+        p_est[k], v_est[k], q_est[k], p_cov[k] = measurement_update(var_gnss, p_cov[k], gnss.data[gnss_i].T, p_est[k], v_est[k], q_est[k])
+        gnss_i += 1
+    
 
+f.close()
     # Update states (save)
+    #already updated
 
 #### 6. Results and Analysis ###################################################################
 
@@ -252,16 +293,16 @@ plt.show()
 # that corresponds to what we're expecting on Coursera.
 ################################################################################################
 
-# Pt. 1 submission
-p1_indices = [9000, 9400, 9800, 10200, 10600]
-p1_str = ''
-for val in p1_indices:
-    for i in range(3):
-        p1_str += '%.3f ' % (p_est[val, i])
-with open('pt1_submission.txt', 'w') as file:
-    file.write(p1_str)
+# Pt. 1 submission, Localization
+# p1_indices = [9000, 9400, 9800, 10200, 10600]
+# p1_str = ''
+# for val in p1_indices:
+#     for i in range(3):
+#         p1_str += '%.3f ' % (p_est[val, i])
+# with open('pt1_submission.txt', 'w') as file:
+#     file.write(p1_str)
 
-# Pt. 2 submission
+# Pt. 2 submission, Effect of poor calibration
 # p2_indices = [9000, 9400, 9800, 10200, 10600]
 # p2_str = ''
 # for val in p2_indices:
@@ -270,11 +311,11 @@ with open('pt1_submission.txt', 'w') as file:
 # with open('pt2_submission.txt', 'w') as file:
 #     file.write(p2_str)
 
-# Pt. 3 submission
-# p3_indices = [6800, 7600, 8400, 9200, 10000]
-# p3_str = ''
-# for val in p3_indices:
-#     for i in range(3):
-#         p3_str += '%.3f ' % (p_est[val, i])
-# with open('pt3_submission.txt', 'w') as file:
-#     file.write(p3_str)
+# Pt. 3 submission, effects of sensors
+p3_indices = [6800, 7600, 8400, 9200, 10000]
+p3_str = ''
+for val in p3_indices:
+    for i in range(3):
+        p3_str += '%.3f ' % (p_est[val, i])
+with open('pt3_submission.txt', 'w') as file:
+    file.write(p3_str)
